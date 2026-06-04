@@ -23,6 +23,36 @@ function isMealTicketDepartment(raw: string): boolean {
   return dept === "BOH" || dept === "FOH";
 }
 
+function formatIsoDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function parseTimestamp(raw: string): Date | null {
+  const match = raw.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  if (!month || !day || !year) return null;
+  return new Date(year, month - 1, day);
+}
+
+function getNextSunday(date: Date): Date {
+  const next = new Date(date);
+  const daysUntilSunday = (7 - next.getDay()) % 7 || 7;
+  next.setDate(next.getDate() + daysUntilSunday);
+  return next;
+}
+
+function getDateAfter(start: Date, dayOffset: number): string {
+  const date = new Date(start);
+  date.setDate(start.getDate() + dayOffset);
+  return formatIsoDate(date);
+}
+
 function parseDateHeader(
   raw: string,
   fallbackMonth: string,
@@ -61,13 +91,17 @@ interface ConvertedEntry {
 
 function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: string | null } {
   const lines = raw.trim().split("\n").map((l) => l.replace(/\r$/, ""));
-  if (lines.length < 2) return { entries: [], error: "데이터가 너무 짧습니다. 헤더와 최소 1개 행이 필요합니다." };
+  if (lines.length < 1) return { entries: [], error: "데이터를 붙여넣어 주세요." };
 
   const header = lines[0].split("\t");
   if (header.length < 2) return { entries: [], error: "탭으로 구분된 데이터를 붙여넣어 주세요." };
 
   const normalizedHeader = header.map(normalizeHeader);
   const firstCell = normalizedHeader[0];
+
+  const firstTimestamp = parseTimestamp(header[0]);
+  const hasHeader = firstCell === "date" || firstCell === "날짜" || normalizedHeader.includes("성함") || normalizedHeader.includes("이름");
+  const startRow = hasHeader ? 1 : 0;
 
   if (firstCell === "date" || firstCell === "날짜") {
     const menuIdx = normalizedHeader.findIndex((h) => h === "menu" || h === "메뉴");
@@ -93,27 +127,35 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
 
   const deptIdx = normalizedHeader.findIndex((h) => h === "부서" || h === "department" || h === "dept");
   const nameIdx = normalizedHeader.findIndex((h) => h === "성함" || h === "이름" || h === "name" || h === "직원");
-  const userNameIdx = nameIdx === -1 ? 0 : nameIdx;
+  const userNameIdx = nameIdx === -1 ? 2 : nameIdx;
+  const departmentIdx = deptIdx === -1 ? 1 : deptIdx;
 
   const dateColumns: { index: number; date: string }[] = [];
-  let activeMonth = String(new Date().getMonth() + 1).padStart(2, "0");
-  for (let i = 1; i < header.length; i++) {
-    if (i === deptIdx || i === nameIdx) continue;
-    const parsed = parseDateHeader(header[i], activeMonth);
-    if (!parsed) continue;
-    activeMonth = parsed.month;
-    dateColumns.push({ index: i, date: parsed.date });
+  if (!hasHeader && firstTimestamp) {
+    const firstMenuDate = getNextSunday(firstTimestamp);
+    for (let i = 3; i < header.length; i++) {
+      dateColumns.push({ index: i, date: getDateAfter(firstMenuDate, i - 3) });
+    }
+  } else {
+    let activeMonth = String(new Date().getMonth() + 1).padStart(2, "0");
+    for (let i = 1; i < header.length; i++) {
+      if (i === deptIdx || i === nameIdx) continue;
+      const parsed = parseDateHeader(header[i], activeMonth);
+      if (!parsed) continue;
+      activeMonth = parsed.month;
+      dateColumns.push({ index: i, date: parsed.date });
+    }
   }
   if (dateColumns.length === 0) {
-    return { entries: [], error: "날짜 열을 인식할 수 없습니다. 열 헤더가 5/12, 2026-05-12 등의 형식인지 확인해주세요." };
+    return { entries: [], error: "날짜 열을 인식할 수 없습니다. 헤더를 포함하거나 Timestamp부터 복사해주세요." };
   }
 
   const grouped = new Map<string, { menu: string; users: string[] }>();
-  for (let r = 1; r < lines.length; r++) {
+  for (let r = startRow; r < lines.length; r++) {
     const cols = lines[r].split("\t");
     const userName = (cols[userNameIdx] ?? "").trim();
     if (!userName) continue;
-    if (deptIdx !== -1 && !isMealTicketDepartment(cols[deptIdx] ?? "")) continue;
+    if (!isMealTicketDepartment(cols[departmentIdx] ?? "")) continue;
     if (!canUseMealTicket(userName)) continue;
     for (const { index, date } of dateColumns) {
       const menu = (cols[index] ?? "").trim();
@@ -301,7 +343,7 @@ export default function Admin() {
               붙여넣기 형식 예시
             </p>
             <p className="text-xs mb-2" style={{ color: "hsl(var(--muted-foreground))" }}>
-              부서 / 성함 / 날짜별 메뉴 범위를 그대로 붙여넣으면 BOH, FOH만 변환됩니다
+              헤더 포함 또는 Timestamp부터 복사한 응답 데이터를 붙여넣으면 BOH, FOH만 변환됩니다
             </p>
             <pre
               className="text-xs rounded-xl p-3 overflow-x-auto"
