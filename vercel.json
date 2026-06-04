@@ -1,0 +1,9 @@
+{
+  "installCommand": "pnpm install --no-frozen-lockfile --filter \"@workspace/meal-schedule...\"",
+  "buildCommand": "pnpm --filter @workspace/meal-schedule run build",
+  "outputDirectory": "artifacts/meal-schedule/dist/public",
+  "rewrites": [
+    { "source": "/api/meal-data", "destination": "/meal-data.json" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
