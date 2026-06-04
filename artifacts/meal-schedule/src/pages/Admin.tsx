@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { parseTabSeparatedData } from "@/lib/storage";
-import { fetchMealData, saveMealData } from "@/lib/api";
 import { canUseMealTicket } from "@/lib/meal-ticket";
 import type { MealEntry } from "@/lib/storage";
 
-const DIRECT_SAMPLE = `date\tmenu\tusers
-2026-05-12\t갈비탕\t김형진,오현찬
-2026-05-13\t짬뽕밥\t오현찬
-2026-05-14\t마제소바\t김형진,왕윤진`;
+const DIRECT_SAMPLE = `[
+  {
+    "date": "2026-06-07",
+    "menu": "콩나물밥, 애호박찌개",
+    "users": ["이기환", "임지웅"]
+  }
+]`;
 
 const CONVERTER_SAMPLE = `부서\t성함\t(6/1일 월요일\t(2일 화요일\t(3일 수요일
 Prep full-time\t오현찬\t라볶이\t돼지고기 수육\t
@@ -176,10 +178,25 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
   return { entries, error: null };
 }
 
-function entriesToTsv(entries: ConvertedEntry[]): string {
-  const header = "date\tmenu\tusers";
-  const rows = entries.map((e) => `${e.date}\t${e.menu}\t${e.users.join(",")}`);
-  return [header, ...rows].join("\n");
+function entriesToJson(entries: ConvertedEntry[]): string {
+  return JSON.stringify(entries, null, 2);
+}
+
+function parseMealJson(raw: string): MealEntry[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  const entries: MealEntry[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const date = typeof record.date === "string" ? record.date.trim() : "";
+    const menu = typeof record.menu === "string" ? record.menu.trim() : "";
+    const users = Array.isArray(record.users)
+      ? record.users.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      : [];
+    if (date && menu) entries.push({ date, menu, users });
+  }
+  return entries;
 }
 
 type Mode = "converter" | "direct";
@@ -191,30 +208,16 @@ export default function Admin() {
   const [converterResult, setConverterResult] = useState<ConvertedEntry[] | null>(null);
   const [converterError, setConverterError] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
-  const [applyStatus, setApplyStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
 
   const [raw, setRaw] = useState("");
-  const [directStatus, setDirectStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
+  const [directStatus, setDirectStatus] = useState<"idle" | "success" | "error">("idle");
   const [directMessage, setDirectMessage] = useState("");
   const [preview, setPreview] = useState<MealEntry[]>([]);
-  const [previewLoaded, setPreviewLoaded] = useState(false);
-
-  async function loadPreview() {
-    if (previewLoaded) return;
-    try {
-      const data = await fetchMealData();
-      setPreview(data);
-      setPreviewLoaded(true);
-    } catch {
-      /* ignore */
-    }
-  }
 
   function handleConvert() {
     setConverterError("");
     setConverterResult(null);
     setCopyState("idle");
-    setApplyStatus("idle");
     if (!converterInput.trim()) {
       setConverterError("데이터를 붙여넣어 주세요.");
       return;
@@ -227,73 +230,52 @@ export default function Admin() {
     setConverterResult(entries);
   }
 
-  function handleCopyTsv() {
+  function handleCopyJson() {
     if (!converterResult) return;
-    const tsv = entriesToTsv(converterResult);
-    navigator.clipboard.writeText(tsv).then(() => {
+    navigator.clipboard.writeText(entriesToJson(converterResult)).then(() => {
       setCopyState("copied");
       setTimeout(() => setCopyState("idle"), 2000);
     });
   }
 
-  async function handleApplyFromConverter() {
-    if (!converterResult) return;
-    setApplyStatus("saving");
-    try {
-      await saveMealData(converterResult);
-      setPreview(converterResult);
-      setPreviewLoaded(true);
-      window.dispatchEvent(new Event("meal-schedule-updated"));
-      setApplyStatus("success");
-      setTimeout(() => setApplyStatus("idle"), 3000);
-    } catch {
-      setApplyStatus("error");
-      setTimeout(() => setApplyStatus("idle"), 3000);
-    }
-  }
-
-  async function handleApplyDirect() {
+  function handleValidateJson() {
     if (!raw.trim()) {
       setDirectStatus("error");
       setDirectMessage("데이터를 입력해주세요.");
       return;
     }
-    const entries = parseTabSeparatedData(raw);
-    if (entries.length === 0) {
-      setDirectStatus("error");
-      setDirectMessage("올바른 형식의 데이터가 아닙니다. 헤더(date / menu / users)를 확인해주세요.");
-      return;
-    }
-    setDirectStatus("saving");
     try {
-      await saveMealData(entries);
+      const entries = raw.trim().startsWith("[")
+        ? parseMealJson(raw)
+        : parseTabSeparatedData(raw);
+      if (entries.length === 0) {
+        throw new Error("empty");
+      }
       setPreview(entries);
-      setPreviewLoaded(true);
-      window.dispatchEvent(new Event("meal-schedule-updated"));
       setDirectStatus("success");
-      setDirectMessage(`${entries.length}개의 일정이 저장되었습니다.`);
+      setDirectMessage(`${entries.length}개의 JSON 일정이 확인되었습니다.`);
     } catch {
       setDirectStatus("error");
-      setDirectMessage("저장에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      setDirectMessage("올바른 meal-data.json 형식이 아닙니다.");
     }
   }
 
-  async function handleClearDirect() {
-    setDirectStatus("saving");
-    try {
-      await saveMealData([]);
-      setPreview([]);
-      setRaw("");
-      setDirectStatus("idle");
-      setDirectMessage("");
-      window.dispatchEvent(new Event("meal-schedule-updated"));
-    } catch {
-      setDirectStatus("error");
-      setDirectMessage("초기화에 실패했습니다.");
-    }
+  function handleCopyDirectJson() {
+    if (preview.length === 0) return;
+    navigator.clipboard.writeText(entriesToJson(preview)).then(() => {
+      setDirectStatus("success");
+      setDirectMessage("meal-data.json 내용이 복사되었습니다.");
+    });
   }
 
-  const tsvOutput = converterResult ? entriesToTsv(converterResult) : "";
+  function handleClearDirect() {
+    setPreview([]);
+    setRaw("");
+    setDirectStatus("idle");
+    setDirectMessage("");
+  }
+
+  const jsonOutput = converterResult ? entriesToJson(converterResult) : "";
 
   return (
     <div className="flex flex-col gap-5 px-4 py-6 max-w-md mx-auto w-full">
@@ -313,7 +295,7 @@ export default function Admin() {
           <button
             key={m}
             data-testid={`tab-${m}`}
-            onClick={() => { setMode(m); loadPreview(); }}
+            onClick={() => setMode(m)}
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150"
             style={
               mode === m
@@ -328,7 +310,7 @@ export default function Admin() {
                   }
             }
           >
-            {m === "converter" ? "🔄 스프레드시트 변환" : "📋 직접 입력"}
+            {m === "converter" ? "🔄 스프레드시트 변환" : "📋 JSON 직접 입력"}
           </button>
         ))}
       </div>
@@ -368,7 +350,6 @@ export default function Admin() {
                 setConverterError("");
                 setConverterResult(null);
                 setCopyState("idle");
-                setApplyStatus("idle");
               }}
               placeholder={CONVERTER_SAMPLE}
               className="w-full rounded-2xl p-4 text-sm resize-none focus:outline-none transition-all"
@@ -419,8 +400,8 @@ export default function Admin() {
                     변환 결과 ({converterResult.length}건)
                   </p>
                   <button
-                    data-testid="button-copy-tsv"
-                    onClick={handleCopyTsv}
+                    data-testid="button-copy-json"
+                    onClick={handleCopyJson}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all active:scale-95"
                     style={
                       copyState === "copied"
@@ -448,7 +429,7 @@ export default function Admin() {
                   }}
                   data-testid="converter-output"
                 >
-                  {tsvOutput}
+                  {jsonOutput}
                 </pre>
 
                 <div className="flex flex-col gap-2 mt-1">
@@ -471,44 +452,9 @@ export default function Admin() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2">
-                <button
-                  data-testid="button-apply-from-converter"
-                  onClick={handleApplyFromConverter}
-                  disabled={applyStatus === "saving"}
-                  className="w-full py-3.5 rounded-2xl text-sm font-bold transition-all active:scale-95 disabled:opacity-60"
-                  style={
-                    applyStatus === "success"
-                      ? {
-                          background: "hsl(142 72% 50% / 0.15)",
-                          color: "hsl(142 72% 55%)",
-                          border: "1px solid hsl(142 72% 50% / 0.3)",
-                        }
-                      : applyStatus === "error"
-                      ? {
-                          background: "hsl(0 72% 55% / 0.1)",
-                          color: "hsl(0 72% 60%)",
-                          border: "1px solid hsl(0 72% 55% / 0.3)",
-                        }
-                      : {
-                          background: "hsl(221 83% 60% / 0.15)",
-                          color: "hsl(var(--primary))",
-                          border: "1px solid hsl(var(--primary) / 0.3)",
-                        }
-                  }
-                >
-                  {applyStatus === "saving"
-                    ? "저장 중..."
-                    : applyStatus === "success"
-                    ? "✓ 저장되었습니다 — 모든 기기에 반영됩니다"
-                    : applyStatus === "error"
-                    ? "저장 실패 — 다시 시도해주세요"
-                    : "앱에 바로 적용하기"}
-                </button>
-                <p className="text-xs text-center" style={{ color: "hsl(var(--muted-foreground))" }}>
-                  서버에 저장되어 모든 기기에서 동일하게 보입니다
-                </p>
-              </div>
+              <p className="text-xs text-center" style={{ color: "hsl(var(--muted-foreground))" }}>
+                복사한 JSON을 <code>artifacts/meal-schedule/public/meal-data.json</code>에 반영한 뒤 Git에 올리면 유지됩니다
+              </p>
             </>
           )}
         </>
@@ -521,7 +467,7 @@ export default function Admin() {
             style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}
           >
             <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "hsl(var(--muted-foreground))" }}>
-              데이터 형식 예시
+              meal-data.json 형식 예시
             </p>
             <pre
               className="text-xs rounded-xl p-3 overflow-x-auto"
@@ -535,12 +481,12 @@ export default function Admin() {
               {DIRECT_SAMPLE}
             </pre>
             <p className="text-xs mt-2" style={{ color: "hsl(var(--muted-foreground))" }}>
-              헤더: <code>date</code> / <code>menu</code> / <code>users</code> (탭 구분, 이름은 쉼표 구분)
+              JSON 배열 형식입니다. 기존 TSV도 붙여넣으면 JSON으로 검증/복사할 수 있습니다.
             </p>
           </div>
 
           <div className="flex flex-col gap-3">
-            <label className="text-sm font-semibold">데이터 붙여넣기</label>
+            <label className="text-sm font-semibold">JSON 데이터 붙여넣기</label>
             <textarea
               data-testid="input-paste"
               value={raw}
@@ -589,17 +535,24 @@ export default function Admin() {
           <div className="flex gap-3">
             <button
               data-testid="button-apply"
-              onClick={handleApplyDirect}
-              disabled={directStatus === "saving"}
+              onClick={handleValidateJson}
               className="flex-1 py-3.5 rounded-2xl text-sm font-bold transition-all active:scale-95 disabled:opacity-60"
               style={{ background: "hsl(var(--primary))", color: "hsl(var(--primary-foreground))" }}
             >
-              {directStatus === "saving" ? "저장 중..." : "적용하기"}
+              검증하기
+            </button>
+            <button
+              data-testid="button-copy-direct-json"
+              onClick={handleCopyDirectJson}
+              disabled={preview.length === 0}
+              className="px-5 py-3.5 rounded-2xl text-sm font-semibold transition-all active:scale-95 disabled:opacity-60"
+              style={{ background: "hsl(221 83% 60% / 0.15)", color: "hsl(var(--primary))", border: "1px solid hsl(var(--primary) / 0.3)" }}
+            >
+              복사
             </button>
             <button
               data-testid="button-clear"
               onClick={handleClearDirect}
-              disabled={directStatus === "saving"}
               className="px-5 py-3.5 rounded-2xl text-sm font-semibold transition-all active:scale-95 disabled:opacity-60"
               style={{ background: "hsl(var(--secondary))", color: "hsl(var(--secondary-foreground))" }}
             >
@@ -613,7 +566,7 @@ export default function Admin() {
               style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}
             >
               <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "hsl(var(--muted-foreground))" }}>
-                저장된 일정 ({preview.length}건)
+                검증된 일정 ({preview.length}건)
               </p>
               <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
                 {preview.map((entry) => (
