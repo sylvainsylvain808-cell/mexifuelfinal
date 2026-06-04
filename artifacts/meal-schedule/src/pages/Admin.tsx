@@ -55,11 +55,58 @@ function getDateAfter(start: Date, dayOffset: number): string {
   return formatIsoDate(date);
 }
 
+function parseHeaderDateAnchor(raw: string): { month?: number; day: number } | null {
+  const s = raw.trim().split(/\s+\/\s+/)[0];
+  const explicit = s.match(/(\d{1,2})\/(\d{1,2})/);
+  if (explicit) {
+    return { month: Number(explicit[1]), day: Number(explicit[2]) };
+  }
+  const dayOnly = s.match(/\(?\s*(\d{1,2})일/);
+  if (dayOnly) {
+    return { day: Number(dayOnly[1]) };
+  }
+  return null;
+}
+
+function buildDateColumnsFromHeaders(
+  header: string[],
+  excludedIndexes: Set<number>,
+): { index: number; date: string }[] {
+  const year = new Date().getFullYear();
+  const candidates = header
+    .map((h, index) => ({ index, parsed: parseHeaderDateAnchor(h) }))
+    .filter((item): item is { index: number; parsed: { month?: number; day: number } } => {
+      return !excludedIndexes.has(item.index) && item.parsed !== null;
+    });
+
+  if (candidates.length === 0) return [];
+
+  const firstExplicit = candidates.find((item) => item.parsed.month !== undefined);
+  if (firstExplicit) {
+    const anchor = new Date(year, firstExplicit.parsed.month! - 1, firstExplicit.parsed.day);
+    return candidates.map(({ index }) => {
+      const offset = candidates.findIndex((item) => item.index === index) -
+        candidates.findIndex((item) => item.index === firstExplicit.index);
+      return { index, date: getDateAfter(anchor, offset) };
+    });
+  }
+
+  let activeMonth = String(new Date().getMonth() + 1).padStart(2, "0");
+  const columns: { index: number; date: string }[] = [];
+  for (const { index } of candidates) {
+    const parsed = parseDateHeader(header[index], activeMonth);
+    if (!parsed) continue;
+    activeMonth = parsed.month;
+    columns.push({ index, date: parsed.date });
+  }
+  return columns;
+}
+
 function parseDateHeader(
   raw: string,
   fallbackMonth: string,
 ): { date: string; month: string } | null {
-  const s = raw.trim();
+  const s = raw.trim().split(/\s+\/\s+/)[0];
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     return { date: s, month: s.slice(5, 7) };
@@ -139,14 +186,9 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
       dateColumns.push({ index: i, date: getDateAfter(firstMenuDate, i - 3) });
     }
   } else {
-    let activeMonth = String(new Date().getMonth() + 1).padStart(2, "0");
-    for (let i = 1; i < header.length; i++) {
-      if (i === deptIdx || i === nameIdx) continue;
-      const parsed = parseDateHeader(header[i], activeMonth);
-      if (!parsed) continue;
-      activeMonth = parsed.month;
-      dateColumns.push({ index: i, date: parsed.date });
-    }
+    dateColumns.push(
+      ...buildDateColumnsFromHeaders(header, new Set([deptIdx, nameIdx])),
+    );
   }
   if (dateColumns.length === 0) {
     return { entries: [], error: "날짜 열을 인식할 수 없습니다. 헤더를 포함하거나 Timestamp부터 복사해주세요." };
