@@ -3,9 +3,11 @@ import { getTodayString, formatDate, formatWeekday, getEntryForDate } from "@/li
 import { useMealData } from "@/hooks/useMealData";
 import { getMealTicketUsers } from "@/lib/meal-ticket";
 import {
+  hasRemoteCheckinStore,
   loadCheckinState,
-  markDone,
-  unmark,
+  loadSharedCheckinState,
+  markDoneShared,
+  unmarkShared,
   type CheckinState,
 } from "@/lib/checkin";
 
@@ -21,9 +23,34 @@ export default function Today() {
 
   const [checkin, setCheckin] = useState<CheckinState>(() => loadCheckinState(today));
   const [modal, setModal] = useState<{ name: string } | null>(null);
+  const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
     setCheckin(loadCheckinState(today));
+  }, [today]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshSharedState() {
+      if (!hasRemoteCheckinStore()) return;
+      try {
+        const state = await loadSharedCheckinState(today);
+        if (!cancelled) {
+          setCheckin(state);
+          setSyncError("");
+        }
+      } catch {
+        if (!cancelled) setSyncError("실시간 동기화 연결을 확인해주세요");
+      }
+    }
+
+    refreshSharedState();
+    const interval = window.setInterval(refreshSharedState, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [today]);
 
   const handleCardPress = useCallback((name: string) => {
@@ -32,16 +59,38 @@ export default function Today() {
 
   const handleConfirmDone = useCallback(() => {
     if (!modal) return;
-    setCheckin((prev) => markDone(prev, modal.name));
+    const name = modal.name;
+    setCheckin((prev) => {
+      void markDoneShared(prev, name).catch(() => {
+        setSyncError("저장에 실패했습니다. 다시 시도해주세요");
+      });
+      return {
+        ...prev,
+        records: {
+          ...prev.records,
+          [name]: {
+            done: true,
+            time: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+          },
+        },
+      };
+    });
     setModal(null);
   }, [modal]);
 
   const handleUndo = useCallback((name: string) => {
-    setCheckin((prev) => unmark(prev, name));
+    setCheckin((prev) => {
+      void unmarkShared(prev, name).catch(() => {
+        setSyncError("취소 저장에 실패했습니다. 다시 시도해주세요");
+      });
+      const records = { ...prev.records };
+      delete records[name];
+      return { ...prev, records };
+    });
     setModal(null);
   }, []);
 
-  const doneCount = Object.values(checkin.records).filter((r) => r.done).length;
+  const doneCount = staff.filter((name) => checkin.records[name]?.done).length;
   const remainCount = staff.length - doneCount;
   const isDone = modal ? !!checkin.records[modal.name]?.done : false;
   const doneTime = modal ? checkin.records[modal.name]?.time : undefined;
@@ -58,6 +107,7 @@ export default function Today() {
       <Header today={today} menu={entry?.menu} />
 
       <StatsBar total={staff.length} done={doneCount} remaining={remainCount} />
+      {syncError && <SyncNotice message={syncError} />}
 
       <div style={{ flex: 1, padding: "12px 14px 16px" }}>
         {loading ? (
@@ -83,6 +133,23 @@ export default function Today() {
           onClose={() => setModal(null)}
         />
       )}
+    </div>
+  );
+}
+
+function SyncNotice({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        padding: "8px 14px",
+        fontSize: 12,
+        fontWeight: 600,
+        color: "hsl(0 72% 60%)",
+        background: "hsl(0 72% 55% / 0.1)",
+        borderBottom: "1px solid hsl(0 72% 55% / 0.25)",
+      }}
+    >
+      {message}
     </div>
   );
 }
