@@ -24,6 +24,7 @@ export default function Today() {
   const [checkin, setCheckin] = useState<CheckinState>(() => loadCheckinState(today));
   const [modal, setModal] = useState<{ name: string } | null>(null);
   const [syncError, setSyncError] = useState("");
+  const remoteSyncEnabled = hasRemoteCheckinStore();
 
   useEffect(() => {
     setCheckin(loadCheckinState(today));
@@ -107,6 +108,7 @@ export default function Today() {
       <Header today={today} menu={entry?.menu} />
 
       <StatsBar total={staff.length} done={doneCount} remaining={remainCount} />
+      <SyncStatus enabled={remoteSyncEnabled} />
       {syncError && <SyncNotice message={syncError} />}
 
       <div style={{ flex: 1, padding: "12px 14px 16px" }}>
@@ -133,6 +135,25 @@ export default function Today() {
           onClose={() => setModal(null)}
         />
       )}
+    </div>
+  );
+}
+
+function SyncStatus({ enabled }: { enabled: boolean }) {
+  return (
+    <div
+      style={{
+        padding: "7px 14px",
+        fontSize: 11,
+        fontWeight: 700,
+        color: enabled ? `hsl(${MINT})` : "hsl(42 90% 58%)",
+        background: enabled ? `hsl(${MINT_BG})` : "hsl(42 90% 58% / 0.12)",
+        borderBottom: enabled
+          ? `1px solid hsl(${MINT_BORDER})`
+          : "1px solid hsl(42 90% 58% / 0.25)",
+      }}
+    >
+      {enabled ? "실시간 동기화 ON" : "기기별 저장 모드"}
     </div>
   );
 }
