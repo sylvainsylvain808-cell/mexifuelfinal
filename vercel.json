@@ -2,6 +2,26 @@
   "installCommand": "pnpm install --no-frozen-lockfile --filter \"@workspace/meal-schedule...\"",
   "buildCommand": "pnpm --filter @workspace/meal-schedule run build",
   "outputDirectory": "artifacts/meal-schedule/dist/public",
+  "headers": [
+    {
+      "source": "/",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/api/meal-data", "destination": "/meal-data.json" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
