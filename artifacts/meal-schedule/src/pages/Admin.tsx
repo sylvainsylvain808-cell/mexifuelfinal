@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { parseTabSeparatedData } from "@/lib/storage";
+import { saveMealData } from "@/lib/api";
 import { canUseMealTicket } from "@/lib/meal-ticket";
 import type { MealEntry } from "@/lib/storage";
 
@@ -250,16 +251,21 @@ export default function Admin() {
   const [converterResult, setConverterResult] = useState<ConvertedEntry[] | null>(null);
   const [converterError, setConverterError] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const [converterApplyState, setConverterApplyState] = useState<"idle" | "saving" | "success" | "error">("idle");
+  const [converterApplyMessage, setConverterApplyMessage] = useState("");
 
   const [raw, setRaw] = useState("");
   const [directStatus, setDirectStatus] = useState<"idle" | "success" | "error">("idle");
   const [directMessage, setDirectMessage] = useState("");
   const [preview, setPreview] = useState<MealEntry[]>([]);
+  const [directApplyState, setDirectApplyState] = useState<"idle" | "saving" | "success" | "error">("idle");
 
   function handleConvert() {
     setConverterError("");
     setConverterResult(null);
     setCopyState("idle");
+    setConverterApplyState("idle");
+    setConverterApplyMessage("");
     if (!converterInput.trim()) {
       setConverterError("데이터를 붙여넣어 주세요.");
       return;
@@ -280,6 +286,25 @@ export default function Admin() {
     });
   }
 
+  async function applyEntries(entries: MealEntry[]): Promise<void> {
+    await saveMealData(entries);
+    window.dispatchEvent(new Event("meal-schedule-updated"));
+  }
+
+  async function handleApplyConverted() {
+    if (!converterResult) return;
+    setConverterApplyState("saving");
+    setConverterApplyMessage("앱에 적용 중입니다.");
+    try {
+      await applyEntries(converterResult);
+      setConverterApplyState("success");
+      setConverterApplyMessage(`${converterResult.length}개의 일정이 앱에 적용되었습니다.`);
+    } catch {
+      setConverterApplyState("error");
+      setConverterApplyMessage("적용에 실패했습니다. Supabase 식단표 테이블 설정을 확인해주세요.");
+    }
+  }
+
   function handleValidateJson() {
     if (!raw.trim()) {
       setDirectStatus("error");
@@ -296,6 +321,7 @@ export default function Admin() {
       setPreview(entries);
       setDirectStatus("success");
       setDirectMessage(`${entries.length}개의 JSON 일정이 확인되었습니다.`);
+      setDirectApplyState("idle");
     } catch {
       setDirectStatus("error");
       setDirectMessage("올바른 meal-data.json 형식이 아닙니다.");
@@ -310,11 +336,28 @@ export default function Admin() {
     });
   }
 
+  async function handleApplyDirectJson() {
+    if (preview.length === 0) return;
+    setDirectApplyState("saving");
+    setDirectStatus("success");
+    setDirectMessage("앱에 적용 중입니다.");
+    try {
+      await applyEntries(preview);
+      setDirectApplyState("success");
+      setDirectMessage(`${preview.length}개의 일정이 앱에 적용되었습니다.`);
+    } catch {
+      setDirectApplyState("error");
+      setDirectStatus("error");
+      setDirectMessage("적용에 실패했습니다. Supabase 식단표 테이블 설정을 확인해주세요.");
+    }
+  }
+
   function handleClearDirect() {
     setPreview([]);
     setRaw("");
     setDirectStatus("idle");
     setDirectMessage("");
+    setDirectApplyState("idle");
   }
 
   const jsonOutput = converterResult ? entriesToJson(converterResult) : "";
@@ -392,6 +435,8 @@ export default function Admin() {
                 setConverterError("");
                 setConverterResult(null);
                 setCopyState("idle");
+                setConverterApplyState("idle");
+                setConverterApplyMessage("");
               }}
               placeholder={CONVERTER_SAMPLE}
               className="w-full rounded-2xl p-4 text-sm resize-none focus:outline-none transition-all"
@@ -494,9 +539,19 @@ export default function Admin() {
                 </div>
               </div>
 
-              <p className="text-xs text-center" style={{ color: "hsl(var(--muted-foreground))" }}>
-                복사한 JSON을 <code>artifacts/meal-schedule/public/meal-data.json</code>에 반영한 뒤 Git에 올리면 유지됩니다
-              </p>
+              {converterApplyMessage && (
+                <StatusMessage status={converterApplyState === "error" ? "error" : "success"} message={converterApplyMessage} />
+              )}
+
+              <button
+                data-testid="button-apply-converted"
+                onClick={handleApplyConverted}
+                disabled={converterApplyState === "saving"}
+                className="w-full py-3.5 rounded-2xl text-sm font-bold transition-all active:scale-95 disabled:opacity-60"
+                style={{ background: "hsl(142 72% 45%)", color: "#fff" }}
+              >
+                {converterApplyState === "saving" ? "적용 중..." : "앱에 바로 적용"}
+              </button>
             </>
           )}
         </>
@@ -536,6 +591,7 @@ export default function Admin() {
                 setRaw(e.target.value);
                 setDirectStatus("idle");
                 setDirectMessage("");
+                setDirectApplyState("idle");
               }}
               placeholder={DIRECT_SAMPLE}
               className="w-full rounded-2xl p-4 text-sm resize-none focus:outline-none transition-all"
@@ -584,6 +640,15 @@ export default function Admin() {
               검증하기
             </button>
             <button
+              data-testid="button-apply-direct"
+              onClick={handleApplyDirectJson}
+              disabled={preview.length === 0 || directApplyState === "saving"}
+              className="px-5 py-3.5 rounded-2xl text-sm font-semibold transition-all active:scale-95 disabled:opacity-60"
+              style={{ background: "hsl(142 72% 45%)", color: "#fff" }}
+            >
+              {directApplyState === "saving" ? "적용 중" : "적용"}
+            </button>
+            <button
               data-testid="button-copy-direct-json"
               onClick={handleCopyDirectJson}
               disabled={preview.length === 0}
@@ -630,6 +695,29 @@ export default function Admin() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function StatusMessage({ status, message }: { status: "success" | "error"; message: string }) {
+  return (
+    <div
+      className="rounded-xl px-4 py-3 text-sm font-medium"
+      style={
+        status === "success"
+          ? {
+              background: "hsl(142 72% 50% / 0.12)",
+              color: "hsl(142 72% 55%)",
+              border: "1px solid hsl(142 72% 50% / 0.3)",
+            }
+          : {
+              background: "hsl(0 72% 55% / 0.1)",
+              color: "hsl(0 72% 60%)",
+              border: "1px solid hsl(0 72% 55% / 0.3)",
+            }
+      }
+    >
+      {message}
     </div>
   );
 }
