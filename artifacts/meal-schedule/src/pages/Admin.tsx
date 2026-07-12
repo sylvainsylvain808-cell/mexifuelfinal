@@ -26,6 +26,10 @@ function isMealTicketDepartment(raw: string): boolean {
   return dept === "BOH" || dept === "FOH";
 }
 
+function isPrepDepartment(raw: string): boolean {
+  return raw.trim().toUpperCase().includes("PREP");
+}
+
 function formatIsoDate(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -56,6 +60,14 @@ function getDateAfter(start: Date, dayOffset: number): string {
   return formatIsoDate(date);
 }
 
+function getNextDate(date: string): string {
+  return getDateAfter(new Date(`${date}T00:00:00`), 1);
+}
+
+function getPreviousDate(date: string): string {
+  return getDateAfter(new Date(`${date}T00:00:00`), -1);
+}
+
 function parseHeaderDateAnchor(raw: string): { month?: number; day: number } | null {
   const s = raw.trim().split(/\s+\/\s+/)[0];
   const explicit = s.match(/(\d{1,2})\/(\d{1,2})/);
@@ -72,7 +84,7 @@ function parseHeaderDateAnchor(raw: string): { month?: number; day: number } | n
 function buildDateColumnsFromHeaders(
   header: string[],
   excludedIndexes: Set<number>,
-): { index: number; date: string }[] {
+): { index: number; bohFohDate: string; prepDate: string }[] {
   const year = new Date().getFullYear();
   const candidates = header
     .map((h, index) => ({ index, parsed: parseHeaderDateAnchor(h) }))
@@ -88,17 +100,23 @@ function buildDateColumnsFromHeaders(
     return candidates.map(({ index }) => {
       const offset = candidates.findIndex((item) => item.index === index) -
         candidates.findIndex((item) => item.index === firstExplicit.index);
-      return { index, date: getDateAfter(anchor, offset) };
+      let bohFohDate = getDateAfter(anchor, offset);
+      const prepDate = parsePrepDateHeader(header[index], bohFohDate);
+      if (prepDate <= bohFohDate) bohFohDate = getPreviousDate(prepDate);
+      return { index, bohFohDate, prepDate };
     });
   }
 
   let activeMonth = String(new Date().getMonth() + 1).padStart(2, "0");
-  const columns: { index: number; date: string }[] = [];
+  const columns: { index: number; bohFohDate: string; prepDate: string }[] = [];
   for (const { index } of candidates) {
     const parsed = parseDateHeader(header[index], activeMonth);
     if (!parsed) continue;
     activeMonth = parsed.month;
-    columns.push({ index, date: parsed.date });
+    let bohFohDate = parsed.date;
+    const prepDate = parsePrepDateHeader(header[index], bohFohDate);
+    if (prepDate <= bohFohDate) bohFohDate = getPreviousDate(prepDate);
+    columns.push({ index, bohFohDate, prepDate });
   }
   return columns;
 }
@@ -131,6 +149,21 @@ function parseDateHeader(
     return { date: `${year}-${fallbackMonth}-${d}`, month: fallbackMonth };
   }
   return null;
+}
+
+function parsePrepDateHeader(raw: string, bohFohDate: string): string {
+  const parts = raw.trim().split(/\s+\/\s+/);
+  const prepPart = parts[1];
+  if (!prepPart) return getNextDate(bohFohDate);
+
+  const fallbackMonth = bohFohDate.slice(5, 7);
+  const parsed = parseDateHeader(prepPart, fallbackMonth);
+  if (!parsed) return getNextDate(bohFohDate);
+
+  if (parsed.date <= bohFohDate && !/(\d{1,2})[/.](\d{1,2})/.test(prepPart)) {
+    return getNextDate(bohFohDate);
+  }
+  return parsed.date;
 }
 
 interface ConvertedEntry {
@@ -181,11 +214,12 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
   const userNameIdx = nameIdx === -1 ? 2 : nameIdx;
   const departmentIdx = deptIdx === -1 ? 1 : deptIdx;
 
-  const dateColumns: { index: number; date: string }[] = [];
+  const dateColumns: { index: number; bohFohDate: string; prepDate: string }[] = [];
   if (!hasHeader && firstTimestamp) {
     const firstMenuDate = getNextSunday(firstTimestamp);
     for (let i = 3; i < header.length; i++) {
-      dateColumns.push({ index: i, date: getDateAfter(firstMenuDate, i - 3) });
+      const bohFohDate = getDateAfter(firstMenuDate, i - 3);
+      dateColumns.push({ index: i, bohFohDate, prepDate: getNextDate(bohFohDate) });
     }
   } else {
     dateColumns.push(
@@ -201,10 +235,13 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
     const cols = lines[r].split("\t");
     const userName = (cols[userNameIdx] ?? "").trim();
     if (!userName) continue;
+    const department = cols[departmentIdx] ?? "";
+    const isPrep = isPrepDepartment(department);
     const canCheckTicket = isMealTicketDepartment(cols[departmentIdx] ?? "") && canUseMealTicket(userName);
-    for (const { index, date } of dateColumns) {
+    for (const { index, bohFohDate, prepDate } of dateColumns) {
       const menu = (cols[index] ?? "").trim();
       if (!menu) continue;
+      const date = isPrep ? prepDate : bohFohDate;
       const key = `${date}__${menu}`;
       if (!grouped.has(key)) grouped.set(key, { menu, users: [], ticketUsers: [] });
       const entry = grouped.get(key)!;
