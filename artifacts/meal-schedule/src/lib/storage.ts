@@ -48,6 +48,18 @@ export function getEntryForDate(schedule: MealEntry[], date: string): MealEntry 
   return schedule.find((e) => e.date === date);
 }
 
+export function getEntriesForDate(schedule: MealEntry[], date: string): MealEntry[] {
+  return schedule.filter((e) => e.date === date);
+}
+
+export function getEntryForUserOnDate(
+  schedule: MealEntry[],
+  date: string,
+  user: string,
+): MealEntry | undefined {
+  return getEntriesForDate(schedule, date).find((entry) => entry.users.includes(user));
+}
+
 export function formatDate(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
   const month = d.getMonth() + 1;

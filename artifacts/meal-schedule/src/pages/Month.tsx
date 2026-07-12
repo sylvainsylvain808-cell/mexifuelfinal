@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   getSelectedUser,
+  getEntryForUserOnDate,
   getEntryForDate,
   getMonthDates,
   formatDate,
@@ -64,7 +65,9 @@ export default function Month() {
       {!loading && !error && (
         <div className="flex flex-col gap-2">
           {dates.map((date) => {
-            const entry = getEntryForDate(schedule, date);
+            const entry = selectedUser
+              ? getEntryForUserOnDate(schedule, date, selectedUser) ?? getEntryForDate(schedule, date)
+              : getEntryForDate(schedule, date);
             const isToday = date === today;
             const isIncluded = !!selectedUser && !!entry && entry.users.includes(selectedUser);
             const isPast = date < today;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getTodayString, formatDate, formatWeekday, getEntryForDate } from "@/lib/storage";
+import { getTodayString, formatDate, formatWeekday, getEntriesForDate } from "@/lib/storage";
 import { useMealData } from "@/hooks/useMealData";
 import { getMealTicketUsers } from "@/lib/meal-ticket";
 import {
@@ -18,8 +18,20 @@ const MINT_BORDER = "160 84% 39% / 0.35";
 export default function Today() {
   const today = getTodayString();
   const { schedule, loading } = useMealData();
-  const entry = getEntryForDate(schedule, today);
-  const staff: string[] = entry?.ticketUsers ?? getMealTicketUsers(entry?.users ?? []);
+  const entries = getEntriesForDate(schedule, today);
+  const staff: string[] = Array.from(
+    new Set(entries.flatMap((entry) => entry.ticketUsers ?? getMealTicketUsers(entry.users))),
+  );
+  const ticketMenus = Array.from(
+    new Set(
+      entries
+        .filter((entry) => (entry.ticketUsers ?? getMealTicketUsers(entry.users)).length > 0)
+        .map((entry) => entry.menu),
+    ),
+  );
+  const menuLabel = ticketMenus.length > 0
+    ? ticketMenus.join(" / ")
+    : entries.map((entry) => entry.menu).join(" / ");
 
   const [checkin, setCheckin] = useState<CheckinState>(() => loadCheckinState(today));
   const [modal, setModal] = useState<{ name: string } | null>(null);
@@ -105,7 +117,7 @@ export default function Today() {
         flexDirection: "column",
       }}
     >
-      <Header today={today} menu={entry?.menu} />
+      <Header today={today} menu={menuLabel || undefined} />
 
       <StatsBar total={staff.length} done={doneCount} remaining={remainCount} />
       <SyncStatus enabled={remoteSyncEnabled} />

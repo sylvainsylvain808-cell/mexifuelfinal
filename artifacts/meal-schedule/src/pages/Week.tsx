@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   getSelectedUser,
+  getEntryForUserOnDate,
   getEntryForDate,
   getWeekDates,
   formatDate,
@@ -60,7 +61,9 @@ export default function Week() {
         <>
           <div className="flex flex-col gap-3">
             {weekDates.map((date) => {
-              const entry = getEntryForDate(schedule, date);
+              const entry = selectedUser
+                ? getEntryForUserOnDate(schedule, date, selectedUser) ?? getEntryForDate(schedule, date)
+                : getEntryForDate(schedule, date);
               const isToday = date === today;
               const isIncluded = !!selectedUser && !!entry && entry.users.includes(selectedUser);
               const isPast = date < today;

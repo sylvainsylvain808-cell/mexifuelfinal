@@ -3,6 +3,7 @@ import {
   getSelectedUser,
   saveSelectedUser,
   getAllUsers,
+  getEntryForUserOnDate,
   getEntryForDate,
   getTodayString,
   formatDate,
@@ -21,7 +22,9 @@ export default function TodayMenu() {
   }, []);
 
   const today = getTodayString();
-  const entry = getEntryForDate(schedule, today);
+  const entry = selectedUser
+    ? getEntryForUserOnDate(schedule, today, selectedUser) ?? getEntryForDate(schedule, today)
+    : getEntryForDate(schedule, today);
   const users = getAllUsers(schedule);
   const isIncluded = !!selectedUser && !!entry && entry.users.includes(selectedUser);
 
