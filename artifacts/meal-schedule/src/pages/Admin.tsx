@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { parseTabSeparatedData } from "@/lib/storage";
 import { saveMealData } from "@/lib/api";
-import { canUseMealTicket } from "@/lib/meal-ticket";
 import type { MealEntry } from "@/lib/storage";
 
 const DIRECT_SAMPLE = `[
@@ -19,11 +18,6 @@ BOH\t한영민\t라볶이\t돼지고기 수육\t우삼겹 두부 짜글이`;
 
 function normalizeHeader(raw: string): string {
   return raw.trim().toLowerCase().replace(/\s+/g, "");
-}
-
-function isMealTicketDepartment(raw: string): boolean {
-  const dept = raw.trim().toUpperCase();
-  return dept === "BOH" || dept === "FOH";
 }
 
 function formatIsoDate(date: Date): string {
@@ -200,8 +194,6 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
     const cols = lines[r].split("\t");
     const userName = (cols[userNameIdx] ?? "").trim();
     if (!userName) continue;
-    if (!isMealTicketDepartment(cols[departmentIdx] ?? "")) continue;
-    if (!canUseMealTicket(userName)) continue;
     for (const { index, date } of dateColumns) {
       const menu = (cols[index] ?? "").trim();
       if (!menu) continue;
@@ -410,7 +402,7 @@ export default function Admin() {
               붙여넣기 형식 예시
             </p>
             <p className="text-xs mb-2" style={{ color: "hsl(var(--muted-foreground))" }}>
-              헤더 포함 또는 Timestamp부터 복사한 응답 데이터를 붙여넣으면 BOH, FOH만 변환됩니다
+              헤더 포함 또는 Timestamp부터 복사한 응답 데이터를 붙여넣으면 모든 부서의 식단표가 변환됩니다
             </p>
             <pre
               className="text-xs rounded-xl p-3 overflow-x-auto"
