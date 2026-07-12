@@ -97,7 +97,7 @@ async function saveRemoteMealData(entries: MealEntry[]): Promise<void> {
     ticket_users: entry.ticketUsers ?? entry.users,
   }));
 
-  const saveRes = await supabaseFetch(getSupabaseEndpoint("?on_conflict=date"), {
+  const saveRes = await supabaseFetch(getSupabaseEndpoint("?on_conflict=date,menu"), {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify(rows),

@@ -1,13 +1,20 @@
 create table if not exists public.meal_schedules (
-  date text primary key,
+  date text not null,
   menu text not null,
   users text[] not null default '{}',
   ticket_users text[] null,
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  primary key (date, menu)
 );
 
 alter table public.meal_schedules
 add column if not exists ticket_users text[] null;
+
+alter table public.meal_schedules
+drop constraint if exists meal_schedules_pkey;
+
+alter table public.meal_schedules
+add constraint meal_schedules_pkey primary key (date, menu);
 
 alter table public.meal_schedules enable row level security;
 
