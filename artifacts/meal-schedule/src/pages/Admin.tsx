@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { parseTabSeparatedData } from "@/lib/storage";
 import { saveMealData } from "@/lib/api";
+import { canUseMealTicket } from "@/lib/meal-ticket";
 import type { MealEntry } from "@/lib/storage";
 
 const DIRECT_SAMPLE = `[
@@ -18,6 +19,11 @@ BOH\t한영민\t라볶이\t돼지고기 수육\t우삼겹 두부 짜글이`;
 
 function normalizeHeader(raw: string): string {
   return raw.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function isMealTicketDepartment(raw: string): boolean {
+  const dept = raw.trim().toUpperCase();
+  return dept === "BOH" || dept === "FOH";
 }
 
 function formatIsoDate(date: Date): string {
@@ -131,6 +137,7 @@ interface ConvertedEntry {
   date: string;
   menu: string;
   users: string[];
+  ticketUsers?: string[];
 }
 
 function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: string | null } {
@@ -189,22 +196,30 @@ function convertSpreadsheet(raw: string): { entries: ConvertedEntry[]; error: st
     return { entries: [], error: "날짜 열을 인식할 수 없습니다. 헤더를 포함하거나 Timestamp부터 복사해주세요." };
   }
 
-  const grouped = new Map<string, { menu: string; users: string[] }>();
+  const grouped = new Map<string, { menu: string; users: string[]; ticketUsers: string[] }>();
   for (let r = startRow; r < lines.length; r++) {
     const cols = lines[r].split("\t");
     const userName = (cols[userNameIdx] ?? "").trim();
     if (!userName) continue;
+    const canCheckTicket = isMealTicketDepartment(cols[departmentIdx] ?? "") && canUseMealTicket(userName);
     for (const { index, date } of dateColumns) {
       const menu = (cols[index] ?? "").trim();
       if (!menu) continue;
       const key = `${date}__${menu}`;
-      if (!grouped.has(key)) grouped.set(key, { menu, users: [] });
-      grouped.get(key)!.users.push(userName);
+      if (!grouped.has(key)) grouped.set(key, { menu, users: [], ticketUsers: [] });
+      const entry = grouped.get(key)!;
+      entry.users.push(userName);
+      if (canCheckTicket) entry.ticketUsers.push(userName);
     }
   }
 
   const entries: ConvertedEntry[] = Array.from(grouped.entries())
-    .map(([key, val]) => ({ date: key.split("__")[0], menu: val.menu, users: val.users }))
+    .map(([key, val]) => ({
+      date: key.split("__")[0],
+      menu: val.menu,
+      users: val.users,
+      ticketUsers: val.ticketUsers,
+    }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (entries.length === 0) {
@@ -229,7 +244,10 @@ function parseMealJson(raw: string): MealEntry[] {
     const users = Array.isArray(record.users)
       ? record.users.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
       : [];
-    if (date && menu) entries.push({ date, menu, users });
+    const ticketUsers = Array.isArray(record.ticketUsers)
+      ? record.ticketUsers.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      : undefined;
+    if (date && menu) entries.push({ date, menu, users, ticketUsers });
   }
   return entries;
 }

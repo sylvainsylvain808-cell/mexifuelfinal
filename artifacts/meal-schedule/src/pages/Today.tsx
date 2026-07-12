@@ -19,7 +19,7 @@ export default function Today() {
   const today = getTodayString();
   const { schedule, loading } = useMealData();
   const entry = getEntryForDate(schedule, today);
-  const staff: string[] = getMealTicketUsers(entry?.users ?? []);
+  const staff: string[] = entry?.ticketUsers ?? getMealTicketUsers(entry?.users ?? []);
 
   const [checkin, setCheckin] = useState<CheckinState>(() => loadCheckinState(today));
   const [modal, setModal] = useState<{ name: string } | null>(null);

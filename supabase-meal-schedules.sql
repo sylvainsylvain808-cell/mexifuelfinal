@@ -2,8 +2,12 @@ create table if not exists public.meal_schedules (
   date text primary key,
   menu text not null,
   users text[] not null default '{}',
+  ticket_users text[] null,
   updated_at timestamptz not null default now()
 );
+
+alter table public.meal_schedules
+add column if not exists ticket_users text[] null;
 
 alter table public.meal_schedules enable row level security;
 

@@ -2,6 +2,7 @@ export interface MealEntry {
   date: string;
   menu: string;
   users: string[];
+  ticketUsers?: string[];
 }
 
 const USER_KEY = "meal_selected_user";

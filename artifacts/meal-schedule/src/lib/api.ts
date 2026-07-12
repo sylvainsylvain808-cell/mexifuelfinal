@@ -8,6 +8,7 @@ interface SupabaseMealRow {
   date: string;
   menu: string;
   users: string[];
+  ticket_users?: string[] | null;
 }
 
 async function readMealData(res: Response): Promise<MealEntry[] | null> {
@@ -47,6 +48,9 @@ function normalizeMealEntries(entries: MealEntry[]): MealEntry[] {
       date: entry.date,
       menu: entry.menu,
       users: Array.from(new Set(entry.users.filter(Boolean))),
+      ticketUsers: entry.ticketUsers
+        ? Array.from(new Set(entry.ticketUsers.filter(Boolean)))
+        : undefined,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -54,13 +58,23 @@ function normalizeMealEntries(entries: MealEntry[]): MealEntry[] {
 async function fetchRemoteMealData(): Promise<MealEntry[] | null> {
   if (!hasRemoteMealDataStore()) return null;
 
-  const res = await supabaseFetch(getSupabaseEndpoint("?select=date,menu,users&order=date.asc"));
+  let res = await supabaseFetch(getSupabaseEndpoint("?select=date,menu,users,ticket_users&order=date.asc"));
+  if (!res.ok) {
+    res = await supabaseFetch(getSupabaseEndpoint("?select=date,menu,users&order=date.asc"));
+  }
   if (!res.ok) return null;
 
   const rows = (await res.json()) as SupabaseMealRow[];
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
-  return normalizeMealEntries(rows);
+  return normalizeMealEntries(
+    rows.map((row) => ({
+      date: row.date,
+      menu: row.menu,
+      users: row.users,
+      ticketUsers: row.ticket_users ?? undefined,
+    })),
+  );
 }
 
 async function saveRemoteMealData(entries: MealEntry[]): Promise<void> {
@@ -76,10 +90,17 @@ async function saveRemoteMealData(entries: MealEntry[]): Promise<void> {
 
   if (normalized.length === 0) return;
 
+  const rows = normalized.map((entry) => ({
+    date: entry.date,
+    menu: entry.menu,
+    users: entry.users,
+    ticket_users: entry.ticketUsers ?? entry.users,
+  }));
+
   const saveRes = await supabaseFetch(getSupabaseEndpoint("?on_conflict=date"), {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify(normalized),
+    body: JSON.stringify(rows),
   });
   if (!saveRes.ok) throw new Error(`Failed to save remote meal data: ${saveRes.status}`);
 }
